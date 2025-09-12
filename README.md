@@ -1,32 +1,38 @@
-# SynapseDB: Distributed PostgreSQL with Vector Support
+# SynapseDB: Production-Grade Distributed PostgreSQL Database
 
-A distributed database system built on PostgreSQL with pgvector support, inspired by CockroachDB's architecture but implemented as a layer on top of PostgreSQL using logical replication.
+A complete distributed database system built on PostgreSQL with advanced enterprise features, inspired by CockroachDB but implemented as a sophisticated overlay providing true distributed database capabilities.
 
-## Features
+## Overview
 
-### 🌐 Multi-Master Replication
-- **Write Anywhere**: Any node can accept writes with automatic replication
-- **DML Replication**: Row-level changes replicated via WAL logical replication
-- **DDL Replication**: Schema changes captured via event triggers and replicated
-- **Conflict Resolution**: Configurable strategies including last-write-wins
+SynapseDB transforms PostgreSQL into a production-ready distributed database with automatic sharding, consensus-based replication, vector operations, and enterprise-grade reliability features. Unlike simple replication solutions, SynapseDB provides a complete distributed database experience with ACID guarantees across multiple nodes.
 
-### 🔄 High Availability & Consensus
-- **Quorum-Based Writes**: Writes only succeed with majority consensus (2/3 nodes)
-- **Automatic Failover**: Writer node failover with health monitoring
-- **Split-Brain Protection**: Prevents inconsistent states during partitions
-- **Health Monitoring**: Continuous heartbeat and lag monitoring
+## 🚀 Key Features
 
-### 🧠 Vector Operations
-- **pgvector Integration**: Native support for vector embeddings (when available)
-- **Distributed Vector Search**: Similarity searches across all nodes
-- **Vector Conflict Resolution**: Specialized handling for embedding updates
-- **Fallback Support**: JSON-based vector operations when pgvector unavailable
+### 🌐 Distributed Architecture
+- **Raft Consensus**: Complete Raft implementation with leader election and log replication
+- **Multi-Master Replication**: Bi-directional logical replication with pglogical
+- **Automatic Sharding**: Consistent hash-based data partitioning across nodes
+- **2-Phase Commit**: Distributed transaction coordination with rollback support
+- **Schema Versioning**: Coordinated DDL migration system
 
-### 📊 Monitoring & Management
-- **Query Router**: Intelligent query routing based on load and health
-- **Cluster Manager**: Node coordination and metadata management
-- **HAProxy Integration**: High availability endpoints for reads/writes
-- **Grafana Dashboards**: Real-time monitoring and metrics
+### 🔒 Enterprise Security & Reliability
+- **Mutual TLS**: Complete certificate management with automatic rotation
+- **Vector Clocks**: Causal consistency and advanced conflict resolution
+- **Deadlock Detection**: Distributed wait-for graph analysis
+- **Network Partitions**: SWIM gossip protocol for failure detection
+- **Zero-Downtime Updates**: Rolling update system with traffic draining
+
+### 🔍 Advanced Data Operations
+- **pgvector Support**: Native vector embeddings and similarity search
+- **Connection Pooling**: Intelligent cluster-aware routing with circuit breakers
+- **Point-in-Time Backup**: Distributed backup system with S3 support
+- **Conflict Resolution**: Multiple strategies including last-write-wins and merging
+
+### 📊 Monitoring & Operations
+- **Comprehensive Metrics**: Full observability with Prometheus and Grafana
+- **Health Monitoring**: Multi-level health checks and automatic failover
+- **Performance Analytics**: Query routing optimization and load balancing
+- **Operational APIs**: RESTful management interfaces
 
 ## Quick Start
 
@@ -73,43 +79,79 @@ psql "postgresql://synapsedb:changeme123@localhost:5433/synapsedb"  # Node 2
 psql "postgresql://synapsedb:changeme123@localhost:5434/synapsedb"  # Node 3
 ```
 
-## Architecture Overview
+## System Architecture
+
+SynapseDB is architected as a complete distributed database system with multiple layers of coordination, consensus, and data management:
 
 ```
-                    ┌─────────────┐
-                    │  HAProxy    │
-                    │             │
-            ┌───────┤ Writer:5000 ├───────┐
-            │       │ Reader:5001 │       │
-            │       └─────────────┘       │
-            │                             │
-            │       ┌─────────────┐       │
-            │       │ Query       │       │
-            └───────┤ Router:8080 ├───────┘
-                    └─────────────┘
-                            │
-            ┌───────────────┼───────────────┐
-            │               │               │
-    ┌───────────┐   ┌───────────┐   ┌───────────┐
-    │  Node 1   │   │  Node 2   │   │  Node 3   │
-    │(Writer)   │◄─►│           │◄─►│           │
-    │PostgreSQL │   │PostgreSQL │   │PostgreSQL │
-    │   :5432   │   │   :5433   │   │   :5434   │
-    └───────────┘   └───────────┘   └───────────┘
-            │               │               │
-    ┌───────────┐   ┌───────────┐   ┌───────────┐
-    │ Cluster   │   │ Cluster   │   │ Cluster   │
-    │ Manager   │   │ Manager   │   │ Manager   │
-    └───────────┘   └───────────┘   └───────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    Client Applications                           │
+└─────────────────┬───────────────────────────────────────────────┘
+                  │
+┌─────────────────┴───────────────────────────────────────────────┐
+│                Connection Pool & Load Balancer                  │
+│  ┌─────────────────┐  ┌──────────────────┐  ┌─────────────────┐ │
+│  │   HAProxy       │  │ Connection Pool  │  │ Query Router    │ │
+│  │ Writer: :5000   │  │ Circuit Breakers │  │ Load Balancing  │ │
+│  │ Reader: :5001   │  │ Health Checks    │  │ Request Routing │ │
+│  └─────────────────┘  └──────────────────┘  └─────────────────┘ │
+└─────────────────┬───────────────────────────────────────────────┘
+                  │
+┌─────────────────┴───────────────────────────────────────────────┐
+│                 Distributed Coordination Layer                  │
+│ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────┐ │
+│ │    Raft      │ │  Transaction │ │   Schema     │ │ Rolling  │ │
+│ │  Consensus   │ │ Coordinator  │ │   Manager    │ │ Updates  │ │
+│ │              │ │   (2PC)      │ │              │ │          │ │
+│ └──────────────┘ └──────────────┘ └──────────────┘ └──────────┘ │
+│ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────┐ │
+│ │   Gossip     │ │   Vector     │ │   Deadlock   │ │   TLS    │ │
+│ │  Protocol    │ │   Clocks     │ │  Detection   │ │ Manager  │ │
+│ │              │ │              │ │              │ │          │ │
+│ └──────────────┘ └──────────────┘ └──────────────┘ └──────────┘ │
+└─────────────────┬───────────────────────────────────────────────┘
+                  │
+┌─────────────────┴───────────────────────────────────────────────┐
+│                    Data & Storage Layer                         │
+│ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────┐ │
+│ │  PostgreSQL  │ │  Sharding    │ │ Replication  │ │  Backup  │ │
+│ │   + pgvector │ │   Manager    │ │   Manager    │ │ Manager  │ │
+│ │              │ │              │ │  (pglogical) │ │          │ │
+│ └──────────────┘ └──────────────┘ └──────────────┘ └──────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+
+    Node 1              Node 2              Node 3
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│ PostgreSQL  │◄──►│ PostgreSQL  │◄──►│ PostgreSQL  │
+│   :5432     │    │   :5433     │    │   :5434     │
+│             │    │             │    │             │
+│ All Service │    │ All Service │    │ All Service │
+│ Components  │    │ Components  │    │ Components  │
+│ Running     │    │ Running     │    │ Running     │
+└─────────────┘    └─────────────┘    └─────────────┘
 ```
 
-### Core Components
+### Production Components
 
-1. **PostgreSQL Nodes**: 3-node cluster with logical replication
-2. **Cluster Managers**: Node coordination and health monitoring
-3. **Query Router**: Load balancing and intelligent query routing  
-4. **HAProxy**: High availability endpoints
-5. **Monitoring Stack**: Prometheus + Grafana
+**Core Database Services:**
+1. **Raft Consensus**: Leader election, log replication, cluster coordination
+2. **Transaction Coordinator**: 2-phase commit across distributed transactions
+3. **Replication Manager**: Bi-directional logical replication with pglogical
+4. **Sharding Manager**: Automatic data partitioning and redistribution
+5. **Schema Manager**: Coordinated DDL changes across the cluster
+
+**Enterprise Features:**
+6. **Vector Clock System**: Causal consistency and conflict resolution
+7. **Deadlock Detector**: Global wait-for graph analysis and resolution
+8. **Gossip Protocol**: Network partition detection and failure monitoring
+9. **TLS Manager**: Certificate lifecycle management with automatic rotation
+10. **Connection Pool**: Cluster-aware pooling with intelligent routing
+
+**Operational Systems:**
+11. **Backup Manager**: Point-in-time recovery with distributed coordination
+12. **Rolling Update Manager**: Zero-downtime cluster updates
+13. **Health Monitoring**: Multi-layered health checks and failover
+14. **Metrics & Observability**: Comprehensive monitoring with alerting
 
 ## Usage Examples
 
