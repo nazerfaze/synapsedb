@@ -1,0 +1,6 @@
+asyncpg==0.28.0
+aiohttp==3.9.1
+PyYAML==6.0.1
+asyncio-mqtt==0.13.0
+psutil==5.9.6
+click==8.1.7

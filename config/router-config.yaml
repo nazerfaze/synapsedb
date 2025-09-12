@@ -1,0 +1,36 @@
+router_port: 8080
+
+database:
+  name: "synapsedb"
+  user: "synapsedb"
+  password: "changeme123"
+
+cluster:
+  nodes:
+    - name: "node1"
+      host: "172.20.0.10"
+      port: 5432
+    - name: "node2"
+      host: "172.20.0.11"
+      port: 5432
+    - name: "node3"
+      host: "172.20.0.12"
+      port: 5432
+
+routing:
+  # Load balancing strategy: round_robin, least_connections, health_based
+  strategy: "health_based"
+  
+  # Health check settings
+  health_check_interval: 10
+  unhealthy_threshold: 3
+  
+  # Connection pooling
+  max_connections_per_node: 20
+  connection_timeout: 30
+  
+  # Query timeouts
+  query_timeout: 60
+  batch_timeout: 120
+
+version: "1.0.0"

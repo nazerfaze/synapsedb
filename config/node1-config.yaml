@@ -1,0 +1,24 @@
+node:
+  name: "node1"
+  id: "00000000-0000-0000-0000-000000000001"
+  host: "172.20.0.10"
+  port: 5432
+
+database:
+  name: "synapsedb"
+  user: "synapsedb"
+  password: "changeme123"
+
+cluster:
+  nodes:
+    - name: "node1"
+      host: "172.20.0.10"
+      port: 5432
+    - name: "node2"
+      host: "172.20.0.11"
+      port: 5432
+    - name: "node3"
+      host: "172.20.0.12"
+      port: 5432
+
+version: "1.0.0"
