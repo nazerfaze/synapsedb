@@ -1,0 +1,69 @@
+FROM postgres:15
+
+# Install build dependencies and required packages
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    postgresql-server-dev-15 \
+    pkg-config \
+    cmake \
+    wget \
+    curl \
+    openssl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install pglogical from source (latest stable version)
+RUN cd /tmp && \
+    git clone https://github.com/2ndQuadrant/pglogical.git && \
+    cd pglogical && \
+    git checkout REL2_4_STABLE && \
+    make USE_PGXS=1 && \
+    make USE_PGXS=1 install
+
+# Install pgvector from source (latest stable version)
+RUN cd /tmp && \
+    git clone --branch v0.5.1 https://github.com/pgvector/pgvector.git && \
+    cd pgvector && \
+    make && \
+    make install
+
+# Install additional useful extensions
+RUN cd /tmp && \
+    git clone https://github.com/citusdata/pg_cron.git && \
+    cd pg_cron && \
+    make && \
+    make install
+
+# Create SSL certificate directory
+RUN mkdir -p /var/lib/postgresql/ssl && \
+    chown postgres:postgres /var/lib/postgresql/ssl
+
+# Copy custom PostgreSQL configuration
+COPY docker/postgresql-production.conf /etc/postgresql/postgresql.conf
+COPY docker/pg_hba-production.conf /etc/postgresql/pg_hba.conf
+
+# Copy SSL certificate generation script
+COPY docker/generate-certs.sh /usr/local/bin/generate-certs.sh
+RUN chmod +x /usr/local/bin/generate-certs.sh
+
+# Copy initialization scripts
+COPY sql/ /docker-entrypoint-initdb.d/sql/
+COPY scripts/init-extensions.sql /docker-entrypoint-initdb.d/01-init-extensions.sql
+COPY scripts/init-replication.sql /docker-entrypoint-initdb.d/02-init-replication.sql
+
+# Copy custom entrypoint script
+COPY docker/postgres-entrypoint.sh /usr/local/bin/postgres-entrypoint.sh
+RUN chmod +x /usr/local/bin/postgres-entrypoint.sh
+
+# Set environment variables
+ENV POSTGRES_DB=synapsedb
+ENV POSTGRES_USER=synapsedb
+ENV POSTGRES_PASSWORD=changeme123
+ENV PGDATA=/var/lib/postgresql/data/pgdata
+
+# Expose PostgreSQL port
+EXPOSE 5432
+
+ENTRYPOINT ["/usr/local/bin/postgres-entrypoint.sh"]
+CMD ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
