@@ -19,6 +19,7 @@ services:
       - ./certs:/opt/synapsedb/certs
     ports:
       - "5432:5432"
+    command: ["postgres", "-c", "shared_preload_libraries=pglogical", "-c", "wal_level=logical", "-c", "max_wal_senders=10", "-c", "max_replication_slots=10"]
     networks:
       synapsedb_network:
         ipv4_address: 172.20.0.10
@@ -28,67 +29,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # PostgreSQL Node 2 with pglogical + pgvector
-  postgres2:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.postgres
-    container_name: synapsedb-postgres2
-    environment:
-      POSTGRES_DB: synapsedb
-      POSTGRES_USER: synapsedb
-      POSTGRES_PASSWORD: synapsedb
-      NODE_ID: node2
-      NODE_NAME: postgres2
-    volumes:
-      - postgres2_data:/var/lib/postgresql/data
-      - ./config/pg_config.conf:/etc/postgresql/postgresql.conf
-      - ./certs:/opt/synapsedb/certs
-    ports:
-      - "5433:5432"
-    networks:
-      synapsedb_network:
-        ipv4_address: 172.20.0.11
-    depends_on:
-      postgres1:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U synapsedb -d synapsedb"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # PostgreSQL Node 3 with pglogical + pgvector
-  postgres3:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.postgres
-    container_name: synapsedb-postgres3
-    environment:
-      POSTGRES_DB: synapsedb
-      POSTGRES_USER: synapsedb
-      POSTGRES_PASSWORD: synapsedb
-      NODE_ID: node3
-      NODE_NAME: postgres3
-    volumes:
-      - postgres3_data:/var/lib/postgresql/data
-      - ./config/pg_config.conf:/etc/postgresql/postgresql.conf
-      - ./certs:/opt/synapsedb/certs
-    ports:
-      - "5434:5432"
-    networks:
-      synapsedb_network:
-        ipv4_address: 172.20.0.12
-    depends_on:
-      postgres1:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U synapsedb -d synapsedb"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Cluster Manager for Node 1 (All services)
   cluster-manager1:
     build:
       context: .
@@ -101,7 +41,7 @@ services:
       DB_NAME: synapsedb
       DB_USER: synapsedb
       DB_PASSWORD: synapsedb
-      CLUSTER_NODES: node1:postgres1:5432,node2:postgres2:5432,node3:postgres3:5432
+      CLUSTER_NODES: node1:postgres1:5432
     ports:
       - "8080:8080"
       - "8081:8081"
@@ -121,73 +61,6 @@ services:
     restart: unless-stopped
     command: python /app/services/cluster_node.py
 
-  # Cluster Manager for Node 2 (All services)
-  cluster-manager2:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.services
-    container_name: synapsedb-manager2
-    environment:
-      NODE_ID: node2
-      DB_HOST: postgres2
-      DB_PORT: 5432
-      DB_NAME: synapsedb
-      DB_USER: synapsedb
-      DB_PASSWORD: synapsedb
-      CLUSTER_NODES: node1:postgres1:5432,node2:postgres2:5432,node3:postgres3:5432
-    ports:
-      - "8084:8080"
-      - "8085:8081"
-      - "8086:8082"
-      - "8087:8083"
-    volumes:
-      - ./services:/app/services
-      - ./config:/app/config
-      - ./certs:/app/certs
-      - cluster2_data:/app/data
-      - ./logs:/app/logs
-    depends_on:
-      postgres2:
-        condition: service_healthy
-    networks:
-      - synapsedb_network
-    restart: unless-stopped
-    command: python /app/services/cluster_node.py
-
-  # Cluster Manager for Node 3 (All services)
-  cluster-manager3:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.services
-    container_name: synapsedb-manager3
-    environment:
-      NODE_ID: node3
-      DB_HOST: postgres3
-      DB_PORT: 5432
-      DB_NAME: synapsedb
-      DB_USER: synapsedb
-      DB_PASSWORD: synapsedb
-      CLUSTER_NODES: node1:postgres1:5432,node2:postgres2:5432,node3:postgres3:5432
-    ports:
-      - "8088:8080"
-      - "8089:8081"
-      - "8090:8082"
-      - "8091:8083"
-    volumes:
-      - ./services:/app/services
-      - ./config:/app/config
-      - ./certs:/app/certs
-      - cluster3_data:/app/data
-      - ./logs:/app/logs
-    depends_on:
-      postgres3:
-        condition: service_healthy
-    networks:
-      - synapsedb_network
-    restart: unless-stopped
-    command: python /app/services/cluster_node.py
-
-  # HAProxy Load Balancer
   haproxy:
     image: haproxy:2.8-alpine
     container_name: synapsedb-haproxy
@@ -199,8 +72,6 @@ services:
       - "8404:8404"  # HAProxy stats
     depends_on:
       - postgres1
-      - postgres2
-      - postgres3
     networks:
       - synapsedb_network
     restart: unless-stopped
@@ -212,7 +83,7 @@ services:
       dockerfile: docker/Dockerfile.services
     container_name: synapsedb-init
     environment:
-      CLUSTER_NODES: node1:postgres1:5432,node2:postgres2:5432,node3:postgres3:5432
+      CLUSTER_NODES: node1:postgres1:5432
       DB_USER: synapsedb
       DB_PASSWORD: synapsedb
       DB_NAME: synapsedb
@@ -221,10 +92,6 @@ services:
       - ./config:/app/config
     depends_on:
       postgres1:
-        condition: service_healthy
-      postgres2:
-        condition: service_healthy
-      postgres3:
         condition: service_healthy
     networks:
       - synapsedb_network

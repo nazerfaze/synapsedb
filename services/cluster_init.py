@@ -136,7 +136,7 @@ class ClusterInitializer:
                 # Install required extensions
                 for ext in extensions:
                     try:
-                        await conn.execute(f"CREATE EXTENSION IF NOT EXISTS {ext}")
+                        await conn.execute(f"CREATE EXTENSION IF NOT EXISTS \"{ext}\"")
                         logger.info(f"Installed {ext} on {node['id']}")
                     except Exception as e:
                         logger.error(f"Failed to install {ext} on {node['id']}: {e}")
@@ -145,7 +145,7 @@ class ClusterInitializer:
                 # Install optional extensions
                 for ext in optional_extensions:
                     try:
-                        await conn.execute(f"CREATE EXTENSION IF NOT EXISTS {ext}")
+                        await conn.execute(f"CREATE EXTENSION IF NOT EXISTS \"{ext}\"")
                         logger.info(f"Installed {ext} on {node['id']}")
                     except Exception as e:
                         logger.warning(f"Optional extension {ext} not available on {node['id']}: {e}")
@@ -194,6 +194,33 @@ class ClusterInitializer:
                     updated_at TIMESTAMP DEFAULT NOW()
                 )
             """)
+
+            # Create Raft state table
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS synapsedb_consensus.raft_state (
+                    node_id VARCHAR(64) PRIMARY KEY,
+                    current_term BIGINT DEFAULT 0,
+                    voted_for VARCHAR(64),
+                    commit_index BIGINT DEFAULT 0,
+                    last_applied BIGINT DEFAULT 0,
+                    role VARCHAR(32) DEFAULT 'follower',
+                    leader_id VARCHAR(64),
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    updated_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
+
+            # Create Raft log table
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS synapsedb_consensus.raft_log (
+                    log_index BIGINT PRIMARY KEY,
+                    term BIGINT NOT NULL,
+                    command_type VARCHAR(64) NOT NULL,
+                    command_data JSONB NOT NULL,
+                    applied BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
             
             # Insert cluster node information
             for node in self.cluster_nodes:
@@ -230,26 +257,37 @@ class ClusterInitializer:
             try:
                 # Create pglogical node
                 node_dsn = f"host={node['host']} port={node['port']} dbname={self.db_config['database']} user={self.db_config['user']} password={self.db_config['password']}"
-                
-                await conn.execute(
-                    "SELECT pglogical.create_node(node_name := $1, dsn := $2)",
-                    f"node_{node['id']}", node_dsn
-                )
-                
-                # Create replication set
-                await conn.execute(
-                    "SELECT pglogical.create_replication_set($1, $2, $3, $4, $5)",
-                    'synapsedb_set', True, True, True, True
-                )
-                
-                logger.info(f"pglogical node created on {node['id']}")
-                
+
+                try:
+                    await conn.execute(
+                        "SELECT pglogical.create_node(node_name := $1, dsn := $2)",
+                        f"node_{node['id']}", node_dsn
+                    )
+                    logger.info(f"pglogical node created on {node['id']}")
+                except Exception as e:
+                    if "already exists" in str(e) or "already configured" in str(e):
+                        logger.info(f"pglogical node already exists on {node['id']}")
+                    else:
+                        logger.error(f"Failed to create pglogical node on {node['id']}: {e}")
+                        raise
+
+                # Create replication set (separate try/catch)
+                try:
+                    await conn.execute(
+                        "SELECT pglogical.create_replication_set($1, $2, $3, $4, $5)",
+                        'synapsedb_set', True, True, True, True
+                    )
+                    logger.info(f"Created replication set synapsedb_set on {node['id']}")
+                except Exception as e:
+                    if "already exists" in str(e):
+                        logger.info(f"Replication set synapsedb_set already exists on {node['id']}")
+                    else:
+                        logger.error(f"Failed to create replication set on {node['id']}: {e}")
+                        # Don't raise - continue with other nodes
+
             except Exception as e:
-                if "already exists" in str(e):
-                    logger.info(f"pglogical node already exists on {node['id']}")
-                else:
-                    logger.error(f"Failed to create pglogical node on {node['id']}: {e}")
-                    raise
+                logger.error(f"Failed to setup pglogical on {node['id']}: {e}")
+                raise
             finally:
                 await conn.close()
         
@@ -309,7 +347,7 @@ class ClusterInitializer:
         try:
             # Initialize Raft state
             await conn.execute("""
-                INSERT INTO synapsedb_raft.raft_state 
+                INSERT INTO synapsedb_consensus.raft_state
                 (node_id, current_term, voted_for, role, leader_id)
                 VALUES ($1, 0, NULL, 'follower', NULL)
                 ON CONFLICT (node_id) DO NOTHING

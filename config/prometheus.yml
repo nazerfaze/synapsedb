@@ -1,0 +1,31 @@
+# Prometheus configuration for SynapseDB monitoring
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # PostgreSQL nodes
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres1:5432', 'postgres2:5432', 'postgres3:5432']
+    metrics_path: /metrics
+    scrape_interval: 30s
+
+  # Cluster managers
+  - job_name: 'cluster-managers'
+    static_configs:
+      - targets: ['cluster-manager1:8080', 'cluster-manager2:8080', 'cluster-manager3:8080']
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # HAProxy load balancer
+  - job_name: 'haproxy'
+    static_configs:
+      - targets: ['haproxy:8404']
+    metrics_path: /stats?stats;csv
+    scrape_interval: 30s
+
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

@@ -5,7 +5,7 @@ aiohttp==3.9.1
 aiofiles==23.2.1
 
 # Cryptography and security
-cryptography==41.0.8
+cryptography==41.0.7
 pyOpenSSL==23.3.0
 
 # Networking and protocols

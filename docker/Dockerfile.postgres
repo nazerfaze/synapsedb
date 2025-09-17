@@ -11,6 +11,15 @@ RUN apt-get update && apt-get install -y \
     curl \
     openssl \
     ca-certificates \
+    libkrb5-dev \
+    libssl-dev \
+    libselinux1-dev \
+    libzstd-dev \
+    liblz4-dev \
+    libxslt1-dev \
+    libpam0g-dev \
+    zlib1g-dev \
+    uuid-runtime \
     && rm -rf /var/lib/apt/lists/*
 
 # Install pglogical from source (latest stable version)
@@ -39,22 +48,9 @@ RUN cd /tmp && \
 RUN mkdir -p /var/lib/postgresql/ssl && \
     chown postgres:postgres /var/lib/postgresql/ssl
 
-# Copy custom PostgreSQL configuration
-COPY docker/postgresql-production.conf /etc/postgresql/postgresql.conf
-COPY docker/pg_hba-production.conf /etc/postgresql/pg_hba.conf
-
-# Copy SSL certificate generation script
-COPY docker/generate-certs.sh /usr/local/bin/generate-certs.sh
-RUN chmod +x /usr/local/bin/generate-certs.sh
-
-# Copy initialization scripts
-COPY sql/ /docker-entrypoint-initdb.d/sql/
-COPY scripts/init-extensions.sql /docker-entrypoint-initdb.d/01-init-extensions.sql
-COPY scripts/init-replication.sql /docker-entrypoint-initdb.d/02-init-replication.sql
-
-# Copy custom entrypoint script
-COPY docker/postgres-entrypoint.sh /usr/local/bin/postgres-entrypoint.sh
-RUN chmod +x /usr/local/bin/postgres-entrypoint.sh
+# Create SSL certificate directory
+RUN mkdir -p /opt/synapsedb/certs && \
+    chown postgres:postgres /opt/synapsedb/certs
 
 # Set environment variables
 ENV POSTGRES_DB=synapsedb
@@ -65,5 +61,5 @@ ENV PGDATA=/var/lib/postgresql/data/pgdata
 # Expose PostgreSQL port
 EXPOSE 5432
 
-ENTRYPOINT ["/usr/local/bin/postgres-entrypoint.sh"]
-CMD ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["postgres"]

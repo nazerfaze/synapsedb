@@ -63,23 +63,25 @@ class ClusterNode:
         """Parse cluster nodes from environment"""
         nodes_str = os.getenv('CLUSTER_NODES', '')
         nodes = []
-        
+
+        print(f"DEBUG: CLUSTER_NODES = '{nodes_str}'")
+
         for node_str in nodes_str.split(','):
+            node_str = node_str.strip()
             if ':' in node_str:
                 parts = node_str.split(':')
+                print(f"DEBUG: parts = {parts}")
                 if len(parts) >= 3:
                     nodes.append({
-                        'id': parts[0],
-                        'host': parts[1], 
-                        'port': int(parts[2])
+                        'id': parts[0].strip(),
+                        'host': parts[1].strip(),
+                        'port': int(parts[2].strip())
                     })
         
         if not nodes:
-            # Default configuration
+            # Default configuration for single node
             nodes = [
-                {'id': 'node1', 'host': 'postgres1', 'port': 5432},
-                {'id': 'node2', 'host': 'postgres2', 'port': 5432},
-                {'id': 'node3', 'host': 'postgres3', 'port': 5432}
+                {'id': 'node1', 'host': 'postgres1', 'port': 5432}
             ]
         
         return nodes
@@ -120,17 +122,23 @@ class ClusterNode:
             
             # Initialize core database services
             logger.info("Initializing Raft Consensus")
-            raft_node = RaftNode(self.node_id, self.cluster_nodes, self.db_config)
-            await raft_node.initialize()
-            self.services['raft'] = raft_node
+            print(f"DEBUG: self.cluster_nodes = {self.cluster_nodes}")
+            print(f"DEBUG: self.db_config = {self.db_config}")
+            try:
+                raft_node = RaftNode(self.node_id, self.db_config, self.cluster_nodes)
+                await raft_node.initialize()
+                self.services['raft'] = raft_node
+            except Exception as e:
+                print(f"DEBUG: Raft init error: {e}")
+                raise
             
             logger.info("Initializing Replication Manager")
-            repl_manager = ReplicationManager(self.node_id, self.cluster_nodes, self.db_config)
+            repl_manager = ReplicationManager(self.node_id, f"postgres{self.node_id[-1]}", self.db_config, self.cluster_nodes)
             await repl_manager.initialize()
             self.services['replication'] = repl_manager
             
             logger.info("Initializing Sharding Manager")
-            shard_manager = ShardingManager(self.node_id, self.cluster_nodes, self.db_config)
+            shard_manager = ShardingManager(self.node_id, self.db_config, self.cluster_nodes)
             await shard_manager.initialize()
             self.services['sharding'] = shard_manager
             
