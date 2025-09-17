@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y \
 RUN cd /tmp && \
     git clone https://github.com/2ndQuadrant/pglogical.git && \
     cd pglogical && \
-    git checkout REL2_4_STABLE && \
+    git checkout REL2_4_4 && \
     make USE_PGXS=1 && \
     make USE_PGXS=1 install
 
