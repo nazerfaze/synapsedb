@@ -1,0 +1,85 @@
+version: '3.8'
+
+# Deploy this on Server 1 only
+services:
+  # PostgreSQL Node 1 - THE ONLY NODE ON THIS SERVER
+  postgres1:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.postgres
+    container_name: synapsedb-postgres1
+    environment:
+      POSTGRES_DB: synapsedb
+      POSTGRES_USER: synapsedb
+      POSTGRES_PASSWORD: synapsedb
+      NODE_ID: node1
+      NODE_NAME: postgres1
+    volumes:
+      - postgres1_data:/var/lib/postgresql/data
+      - ./config/pg_config.conf:/etc/postgresql/postgresql.conf
+      - ./certs:/opt/synapsedb/certs
+    ports:
+      - "5432:5432"
+    networks:
+      - synapsedb_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synapsedb -d synapsedb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Cluster Manager 1 - ALL SERVICES FOR NODE 1
+  cluster-manager1:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.services
+    container_name: synapsedb-manager1
+    environment:
+      NODE_ID: node1
+      DB_HOST: postgres1
+      DB_PORT: 5432
+      DB_NAME: synapsedb
+      DB_USER: synapsedb
+      DB_PASSWORD: synapsedb
+      # UPDATE THESE IPs TO YOUR ACTUAL SERVER IPs
+      CLUSTER_NODES: node1:SERVER1_IP:5432,node2:SERVER2_IP:5432,node3:SERVER3_IP:5432
+    ports:
+      - "8080:8080"  # Raft consensus
+      - "8081:8081"  # Gossip protocol
+      - "8082:8082"  # Deadlock detection
+      - "8083:8083"  # Backup manager
+    volumes:
+      - ./services:/app/services
+      - ./config:/app/config
+      - ./certs:/app/certs
+      - cluster1_data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      postgres1:
+        condition: service_healthy
+    networks:
+      - synapsedb_network
+    restart: unless-stopped
+    command: python /app/services/cluster_node.py
+
+  # Optional: Local monitoring (or deploy centrally)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: synapsedb-prometheus
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - synapsedb_network
+    restart: unless-stopped
+
+volumes:
+  postgres1_data:
+  cluster1_data:
+  prometheus_data:
+
+networks:
+  synapsedb_network:
+    driver: bridge

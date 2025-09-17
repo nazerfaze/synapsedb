@@ -1,0 +1,71 @@
+# Example: Adding Node 4 to existing 3-node cluster
+version: '3.8'
+
+services:
+  # PostgreSQL Node 4
+  postgres4:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.postgres
+    container_name: synapsedb-postgres4
+    environment:
+      POSTGRES_DB: synapsedb
+      POSTGRES_USER: synapsedb
+      POSTGRES_PASSWORD: synapsedb
+      NODE_ID: node4
+      NODE_NAME: postgres4
+    volumes:
+      - postgres4_data:/var/lib/postgresql/data
+      - ../config/pg_config.conf:/etc/postgresql/postgresql.conf
+      - ../certs:/opt/synapsedb/certs
+    ports:
+      - "5435:5432"
+    networks:
+      - synapsedb_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synapsedb -d synapsedb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Cluster Manager for Node 4
+  cluster-manager4:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.services
+    container_name: synapsedb-manager4
+    environment:
+      NODE_ID: node4
+      DB_HOST: postgres4
+      DB_PORT: 5432
+      DB_NAME: synapsedb
+      DB_USER: synapsedb
+      DB_PASSWORD: synapsedb
+      # Updated cluster configuration with 4 nodes
+      CLUSTER_NODES: node1:postgres1:5432,node2:postgres2:5432,node3:postgres3:5432,node4:postgres4:5432
+    ports:
+      - "8092:8080"
+      - "8093:8081"
+      - "8094:8082"
+      - "8095:8083"
+    volumes:
+      - ../services:/app/services
+      - ../config:/app/config
+      - ../certs:/app/certs
+      - cluster4_data:/app/data
+      - ../logs:/app/logs
+    depends_on:
+      postgres4:
+        condition: service_healthy
+    networks:
+      - synapsedb_network
+    restart: unless-stopped
+    command: python /app/services/cluster_node.py
+
+volumes:
+  postgres4_data:
+  cluster4_data:
+
+networks:
+  synapsedb_network:
+    external: true

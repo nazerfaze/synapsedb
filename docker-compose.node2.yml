@@ -1,0 +1,71 @@
+version: '3.8'
+
+# Deploy this on Server 2 only
+services:
+  # PostgreSQL Node 2 - THE ONLY NODE ON THIS SERVER
+  postgres2:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.postgres
+    container_name: synapsedb-postgres2
+    environment:
+      POSTGRES_DB: synapsedb
+      POSTGRES_USER: synapsedb
+      POSTGRES_PASSWORD: synapsedb
+      NODE_ID: node2
+      NODE_NAME: postgres2
+    volumes:
+      - postgres2_data:/var/lib/postgresql/data
+      - ./config/pg_config.conf:/etc/postgresql/postgresql.conf
+      - ./certs:/opt/synapsedb/certs
+    ports:
+      - "5432:5432"  # Standard PostgreSQL port on this server
+    networks:
+      - synapsedb_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synapsedb -d synapsedb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Cluster Manager 2 - ALL SERVICES FOR NODE 2
+  cluster-manager2:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.services
+    container_name: synapsedb-manager2
+    environment:
+      NODE_ID: node2
+      DB_HOST: postgres2
+      DB_PORT: 5432
+      DB_NAME: synapsedb
+      DB_USER: synapsedb
+      DB_PASSWORD: synapsedb
+      # UPDATE THESE IPs TO YOUR ACTUAL SERVER IPs
+      CLUSTER_NODES: node1:SERVER1_IP:5432,node2:SERVER2_IP:5432,node3:SERVER3_IP:5432
+    ports:
+      - "8080:8080"  # Raft consensus
+      - "8081:8081"  # Gossip protocol
+      - "8082:8082"  # Deadlock detection
+      - "8083:8083"  # Backup manager
+    volumes:
+      - ./services:/app/services
+      - ./config:/app/config
+      - ./certs:/app/certs
+      - cluster2_data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      postgres2:
+        condition: service_healthy
+    networks:
+      - synapsedb_network
+    restart: unless-stopped
+    command: python /app/services/cluster_node.py
+
+volumes:
+  postgres2_data:
+  cluster2_data:
+
+networks:
+  synapsedb_network:
+    driver: bridge

@@ -1,0 +1,100 @@
+version: '3.8'
+
+# Deploy this on Server 3 only
+services:
+  # PostgreSQL Node 3 - THE ONLY NODE ON THIS SERVER
+  postgres3:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.postgres
+    container_name: synapsedb-postgres3
+    environment:
+      POSTGRES_DB: synapsedb
+      POSTGRES_USER: synapsedb
+      POSTGRES_PASSWORD: synapsedb
+      NODE_ID: node3
+      NODE_NAME: postgres3
+    volumes:
+      - postgres3_data:/var/lib/postgresql/data
+      - ./config/pg_config.conf:/etc/postgresql/postgresql.conf
+      - ./certs:/opt/synapsedb/certs
+    ports:
+      - "5432:5432"  # Standard PostgreSQL port on this server
+    networks:
+      - synapsedb_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synapsedb -d synapsedb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Cluster Manager 3 - ALL SERVICES FOR NODE 3
+  cluster-manager3:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.services
+    container_name: synapsedb-manager3
+    environment:
+      NODE_ID: node3
+      DB_HOST: postgres3
+      DB_PORT: 5432
+      DB_NAME: synapsedb
+      DB_USER: synapsedb
+      DB_PASSWORD: synapsedb
+      # UPDATE THESE IPs TO YOUR ACTUAL SERVER IPs
+      CLUSTER_NODES: node1:SERVER1_IP:5432,node2:SERVER2_IP:5432,node3:SERVER3_IP:5432
+    ports:
+      - "8080:8080"  # Raft consensus
+      - "8081:8081"  # Gossip protocol
+      - "8082:8082"  # Deadlock detection
+      - "8083:8083"  # Backup manager
+    volumes:
+      - ./services:/app/services
+      - ./config:/app/config
+      - ./certs:/app/certs
+      - cluster3_data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      postgres3:
+        condition: service_healthy
+    networks:
+      - synapsedb_network
+    restart: unless-stopped
+    command: python /app/services/cluster_node.py
+
+  # Centralized monitoring and load balancer (optional - only on one server)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: synapsedb-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin123
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - synapsedb_network
+    restart: unless-stopped
+
+  # HAProxy Load Balancer (deploy on one server or dedicated LB)
+  haproxy:
+    image: haproxy:2.8-alpine
+    container_name: synapsedb-haproxy
+    volumes:
+      - ./config/haproxy_multiserver.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "5001:5001"  # Read endpoint
+      - "5002:5002"  # Write endpoint
+      - "8404:8404"  # HAProxy stats
+    networks:
+      - synapsedb_network
+    restart: unless-stopped
+
+volumes:
+  postgres3_data:
+  cluster3_data:
+  grafana_data:
+
+networks:
+  synapsedb_network:
+    driver: bridge
