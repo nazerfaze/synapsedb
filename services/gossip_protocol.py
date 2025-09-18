@@ -637,9 +637,9 @@ class GossipProtocol:
         try:
             async with self.db_pool.acquire() as conn:
                 rows = await conn.fetch("""
-                    SELECT node_id, node_name, host_address, port, status, 
-                           last_heartbeat, raft_term
-                    FROM synapsedb_replication.node_status
+                    SELECT node_id, node_id as node_name, host, port, status,
+                           last_heartbeat, 0 as raft_term
+                    FROM synapsedb_consensus.cluster_nodes
                     WHERE node_id != $1
                 """, self.node_id)
                 
@@ -647,7 +647,7 @@ class GossipProtocol:
                     node_info = NodeInfo(
                         node_id=str(row['node_id']),
                         name=row['node_name'],
-                        host=row['host_address'],
+                        host=row['host'],
                         port=row['port'],
                         gossip_port=row['port'] + 1000,  # Assume gossip port = db port + 1000
                         state=NodeState.ALIVE if row['status'] == 'active' else NodeState.SUSPECT,

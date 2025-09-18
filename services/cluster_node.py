@@ -146,6 +146,16 @@ class ClusterNode:
             await gossip.initialize()
             self.services['gossip'] = gossip
 
+            # Join existing cluster if this isn't the first node
+            seed_nodes = [n for n in self.cluster_nodes if n['id'] != self.node_id]
+            if seed_nodes:
+                logger.info(f"Attempting to join cluster via seed nodes: {[n['id'] for n in seed_nodes]}")
+                join_success = await gossip.join_cluster(seed_nodes)
+                if join_success:
+                    logger.info("Successfully joined existing cluster")
+                else:
+                    logger.warning("Failed to join existing cluster, continuing as standalone")
+
             logger.info("Initializing Replication Manager with Auto-Discovery")
             repl_manager = ReplicationManager(self.node_id, f"postgres{self.node_id[-1]}", self.db_config, self.cluster_nodes, gossip)
             await repl_manager.initialize()
