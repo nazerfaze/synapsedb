@@ -253,7 +253,7 @@ class ClusterInitializer:
             try:
                 await conn.execute(
                     "SELECT pglogical.create_replication_set($1, $2, $3, $4, $5)",
-                    f'synapsedb_default_{self.db_config["host"]}', True, True, True, True
+                    f"synapsedb_default_{self.db_config['host']}", True, True, True, True
                 )
                 logger.info(f"Created replication set synapsedb_default_{self.db_config['host']} on local database")
             except Exception as e:
@@ -365,7 +365,7 @@ class ClusterInitializer:
                 try:
                     await conn.execute(
                         "SELECT pglogical.replication_set_add_table($1, $2)",
-                        f'synapsedb_default_{self.db_config[\"host\"]}', f'public.{table}'
+                        f"synapsedb_default_{self.db_config['host']}", f'public.{table}'
                     )
                     logger.info(f"Added {table} to replication set")
                 except Exception as e:
