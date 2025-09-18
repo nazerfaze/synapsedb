@@ -41,7 +41,7 @@ services:
       DB_NAME: synapsedb
       DB_USER: synapsedb
       DB_PASSWORD: synapsedb
-      CLUSTER_NODES: node1:postgres1:5432
+      CLUSTER_NODES: node1:104.194.151.230:5432
     ports:
       - "8080:8080"
       - "8081:8081"
@@ -83,10 +83,12 @@ services:
       dockerfile: docker/Dockerfile.services
     container_name: synapsedb-init
     environment:
-      CLUSTER_NODES: node1:postgres1:5432
+      DB_HOST: postgres1
+      DB_PORT: 5432
       DB_USER: synapsedb
       DB_PASSWORD: synapsedb
       DB_NAME: synapsedb
+      CLUSTER_NODES: node1:104.194.151.230:5432
     volumes:
       - ./services:/app/services
       - ./config:/app/config

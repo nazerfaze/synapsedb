@@ -20,6 +20,8 @@ class ClusterInitializer:
     def __init__(self):
         self.cluster_nodes = self._parse_cluster_nodes()
         self.db_config = {
+            'host': os.getenv('DB_HOST', 'postgres1'),
+            'port': int(os.getenv('DB_PORT', '5432')),
             'database': os.getenv('DB_NAME', 'synapsedb'),
             'user': os.getenv('DB_USER', 'synapsedb'),
             'password': os.getenv('DB_PASSWORD', 'synapsedb')
@@ -75,94 +77,75 @@ class ClusterInitializer:
         logger.info("SynapseDB cluster initialization complete!")
     
     async def _wait_for_nodes(self, timeout=300):
-        """Wait for all nodes to be ready"""
-        logger.info("Waiting for all nodes to be ready...")
-        
+        """Wait for local database to be ready"""
+        logger.info("Waiting for local database to be ready...")
+
         start_time = time.time()
-        
+
         while time.time() - start_time < timeout:
-            ready_nodes = 0
-            
-            for node in self.cluster_nodes:
-                try:
-                    conn = await asyncpg.connect(
-                        host=node['host'],
-                        port=node['port'],
-                        **self.db_config,
-                        command_timeout=5
-                    )
-                    
-                    result = await conn.fetchval("SELECT 1")
-                    if result == 1:
-                        ready_nodes += 1
-                    
-                    await conn.close()
-                    
-                except Exception as e:
-                    logger.debug(f"Node {node['id']} not ready: {e}")
-            
-            if ready_nodes == len(self.cluster_nodes):
-                logger.info(f"All {ready_nodes} nodes are ready!")
-                return
-            
-            logger.info(f"{ready_nodes}/{len(self.cluster_nodes)} nodes ready, waiting...")
+            try:
+                # Test connection to local database
+                conn = await asyncpg.connect(**self.db_config, command_timeout=5)
+                result = await conn.fetchval("SELECT 1")
+                await conn.close()
+
+                if result == 1:
+                    logger.info("Local database is ready!")
+                    return
+
+            except Exception as e:
+                logger.debug(f"Local database not ready: {e}")
+
+            logger.info("Local database not ready, waiting...")
             await asyncio.sleep(5)
         
         raise TimeoutError(f"Nodes not ready within {timeout} seconds")
     
     async def _install_extensions(self):
-        """Install required PostgreSQL extensions on all nodes"""
+        """Install required PostgreSQL extensions on local database"""
         logger.info("Installing PostgreSQL extensions...")
-        
+
         extensions = [
             'pglogical',
             'uuid-ossp',
             'btree_gist'
         ]
-        
+
         # Try to install pgvector (optional)
         optional_extensions = ['vector']
-        
-        for node in self.cluster_nodes:
-            logger.info(f"Installing extensions on {node['id']}")
-            
-            conn = await asyncpg.connect(
-                host=node['host'],
-                port=node['port'],
-                **self.db_config
-            )
-            
-            try:
-                # Install required extensions
-                for ext in extensions:
-                    try:
-                        await conn.execute(f"CREATE EXTENSION IF NOT EXISTS \"{ext}\"")
-                        logger.info(f"Installed {ext} on {node['id']}")
-                    except Exception as e:
-                        logger.error(f"Failed to install {ext} on {node['id']}: {e}")
-                        raise
-                
-                # Install optional extensions
-                for ext in optional_extensions:
-                    try:
-                        await conn.execute(f"CREATE EXTENSION IF NOT EXISTS \"{ext}\"")
-                        logger.info(f"Installed {ext} on {node['id']}")
-                    except Exception as e:
-                        logger.warning(f"Optional extension {ext} not available on {node['id']}: {e}")
-                
-            finally:
-                await conn.close()
+
+        logger.info("Installing extensions on local database")
+
+        # Connect to local database
+        conn = await asyncpg.connect(**self.db_config)
+
+        try:
+            # Install required extensions
+            for ext in extensions:
+                try:
+                    await conn.execute(f"CREATE EXTENSION IF NOT EXISTS \"{ext}\"")
+                    logger.info(f"Installed {ext} on local database")
+                except Exception as e:
+                    logger.error(f"Failed to install {ext} on local database: {e}")
+                    raise
+
+            # Install optional extensions
+            for ext in optional_extensions:
+                try:
+                    await conn.execute(f"CREATE EXTENSION IF NOT EXISTS \"{ext}\"")
+                    logger.info(f"Installed {ext} on local database")
+                except Exception as e:
+                    logger.warning(f"Optional extension {ext} not available on local database: {e}")
+
+        finally:
+            await conn.close()
     
     async def _create_system_schemas(self):
         """Create system schemas and tables"""
         logger.info("Creating system schemas...")
-        
-        # Create schemas on the first node (will replicate to others)
-        conn = await asyncpg.connect(
-            host=self.cluster_nodes[0]['host'],
-            port=self.cluster_nodes[0]['port'],
-            **self.db_config
-        )
+
+        # Create schemas on the local database
+        conn = await asyncpg.connect(**self.db_config)
         
         try:
             # Create system schemas
@@ -248,11 +231,15 @@ class ClusterInitializer:
         for node in self.cluster_nodes:
             logger.info(f"Setting up pglogical node on {node['id']}")
             
-            conn = await asyncpg.connect(
-                host=node['host'],
-                port=node['port'],
-                **self.db_config
-            )
+            # Create connection config for this specific node
+            node_db_config = {
+                'host': node['host'],
+                'port': node['port'],
+                'database': self.db_config['database'],
+                'user': self.db_config['user'],
+                'password': self.db_config['password']
+            }
+            conn = await asyncpg.connect(**node_db_config)
             
             try:
                 # Create pglogical node
@@ -303,11 +290,15 @@ class ClusterInitializer:
         """Create subscription from source to target node"""
         logger.info(f"Creating subscription from {source_node['id']} to {target_node['id']}")
         
-        target_conn = await asyncpg.connect(
-            host=target_node['host'],
-            port=target_node['port'],
-            **self.db_config
-        )
+        # Create connection config for target node
+        target_db_config = {
+            'host': target_node['host'],
+            'port': target_node['port'],
+            'database': self.db_config['database'],
+            'user': self.db_config['user'],
+            'password': self.db_config['password']
+        }
+        target_conn = await asyncpg.connect(**target_db_config)
         
         try:
             source_dsn = f"host={source_node['host']} port={source_node['port']} dbname={self.db_config['database']} user={self.db_config['user']} password={self.db_config['password']}"
@@ -337,12 +328,9 @@ class ClusterInitializer:
     async def _initialize_metadata(self):
         """Initialize cluster metadata"""
         logger.info("Initializing cluster metadata...")
-        
-        conn = await asyncpg.connect(
-            host=self.cluster_nodes[0]['host'],
-            port=self.cluster_nodes[0]['port'],
-            **self.db_config
-        )
+
+        # Initialize metadata on the local database
+        conn = await asyncpg.connect(**self.db_config)
         
         try:
             # Initialize Raft state
@@ -355,10 +343,14 @@ class ClusterInitializer:
             
             # Initialize shard configuration
             await conn.execute("""
-                CREATE TABLE IF NOT EXISTS synapsedb_sharding.shard_config (
+                CREATE TABLE IF NOT EXISTS synapsedb_sharding.shard_assignments (
                     shard_id INTEGER PRIMARY KEY,
-                    node_id VARCHAR(64) NOT NULL,
+                    primary_node_id VARCHAR(64) NOT NULL,
+                    replica_node_ids TEXT DEFAULT '[]',
                     status VARCHAR(32) DEFAULT 'active',
+                    key_range_start VARCHAR(64),
+                    key_range_end VARCHAR(64),
+                    table_name VARCHAR(128),
                     created_at TIMESTAMP DEFAULT NOW()
                 )
             """)
@@ -370,10 +362,11 @@ class ClusterInitializer:
                 assigned_node = self.cluster_nodes[node_index]['id']
                 
                 await conn.execute("""
-                    INSERT INTO synapsedb_sharding.shard_config (shard_id, node_id)
-                    VALUES ($1, $2)
+                    INSERT INTO synapsedb_sharding.shard_assignments
+                    (shard_id, primary_node_id, replica_node_ids, status, key_range_start, key_range_end, table_name)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
                     ON CONFLICT (shard_id) DO NOTHING
-                """, i, assigned_node)
+                """, i, assigned_node, '[]', 'active', str(i), str(i), None)
             
             logger.info(f"Initialized {shard_count} shards across {len(self.cluster_nodes)} nodes")
             
@@ -383,12 +376,9 @@ class ClusterInitializer:
     async def _setup_demo_data(self):
         """Setup demo tables and data"""
         logger.info("Setting up demo data...")
-        
-        conn = await asyncpg.connect(
-            host=self.cluster_nodes[0]['host'],
-            port=self.cluster_nodes[0]['port'],
-            **self.db_config
-        )
+
+        # Setup demo data on the local database
+        conn = await asyncpg.connect(**self.db_config)
         
         try:
             # Create demo tables

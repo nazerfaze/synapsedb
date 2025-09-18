@@ -148,13 +148,21 @@ class ClusterNode:
             self.services['transaction'] = txn_coordinator
             
             logger.info("Initializing Schema Manager")
-            schema_manager = SchemaManager(self.node_id, self.cluster_nodes, self.db_config, raft_node)
+            schema_manager = SchemaManager(self.node_id, self.db_config, raft_node, self.cluster_nodes)
             await schema_manager.initialize()
             self.services['schema'] = schema_manager
             
             # Initialize advanced services
             logger.info("Initializing Gossip Protocol")
-            gossip = GossipProtocol(self.node_id, self.cluster_nodes)
+            gossip = GossipProtocol(
+                self.node_id,
+                f"postgres{self.node_id[-1]}",
+                self.db_config['host'],
+                self.db_config['port'],
+                8090,  # gossip_port
+                self.db_config,
+                self.cluster_nodes
+            )
             await gossip.initialize()
             self.services['gossip'] = gossip
             
