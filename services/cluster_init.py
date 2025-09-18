@@ -65,8 +65,8 @@ class ClusterInitializer:
         # Create system schemas
         await self._create_system_schemas()
         
-        # Setup pglogical replication
-        await self._setup_replication()
+        # Setup pglogical nodes (subscriptions will be created automatically by replication manager)
+        await self._setup_pglogical_nodes()
         
         # Initialize cluster metadata
         await self._initialize_metadata()
@@ -223,107 +223,54 @@ class ClusterInitializer:
         finally:
             await conn.close()
     
-    async def _setup_replication(self):
-        """Setup pglogical replication between all nodes"""
-        logger.info("Setting up pglogical replication...")
-        
-        # Create pglogical node on each database
-        for node in self.cluster_nodes:
-            logger.info(f"Setting up pglogical node on {node['id']}")
-            
-            # Create connection config for this specific node
-            node_db_config = {
-                'host': node['host'],
-                'port': node['port'],
-                'database': self.db_config['database'],
-                'user': self.db_config['user'],
-                'password': self.db_config['password']
-            }
-            conn = await asyncpg.connect(**node_db_config)
-            
-            try:
-                # Create pglogical node
-                node_dsn = f"host={node['host']} port={node['port']} dbname={self.db_config['database']} user={self.db_config['user']} password={self.db_config['password']}"
+    async def _setup_pglogical_nodes(self):
+        """Setup pglogical nodes only (subscriptions will be created automatically by replication manager)"""
+        logger.info("Setting up pglogical nodes for auto-discovery...")
+
+        # Only setup the local database node (other nodes will be discovered automatically)
+        logger.info(f"Setting up pglogical node on local database")
+
+        conn = await asyncpg.connect(**self.db_config)
+
+        try:
+            # Create pglogical node
+            node_dsn = f"host={self.db_config['host']} port={self.db_config['port']} dbname={self.db_config['database']} user={self.db_config['user']} password={self.db_config['password']}"
 
                 try:
                     await conn.execute(
                         "SELECT pglogical.create_node(node_name := $1, dsn := $2)",
-                        f"node_{node['id']}", node_dsn
+                        f"{self.db_config['host']}", node_dsn
                     )
-                    logger.info(f"pglogical node created on {node['id']}")
+                    logger.info(f"pglogical node created on local database")
                 except Exception as e:
                     if "already exists" in str(e) or "already configured" in str(e):
-                        logger.info(f"pglogical node already exists on {node['id']}")
+                        logger.info(f"pglogical node already exists on local database")
                     else:
-                        logger.error(f"Failed to create pglogical node on {node['id']}: {e}")
+                        logger.error(f"Failed to create pglogical node on local database: {e}")
                         raise
 
-                # Create replication set (separate try/catch)
-                try:
-                    await conn.execute(
-                        "SELECT pglogical.create_replication_set($1, $2, $3, $4, $5)",
-                        'synapsedb_set', True, True, True, True
-                    )
-                    logger.info(f"Created replication set synapsedb_set on {node['id']}")
-                except Exception as e:
-                    if "already exists" in str(e):
-                        logger.info(f"Replication set synapsedb_set already exists on {node['id']}")
-                    else:
-                        logger.error(f"Failed to create replication set on {node['id']}: {e}")
-                        # Don't raise - continue with other nodes
-
-            except Exception as e:
-                logger.error(f"Failed to setup pglogical on {node['id']}: {e}")
-                raise
-            finally:
-                await conn.close()
-        
-        # Create subscriptions between nodes (full mesh)
-        await asyncio.sleep(5)  # Allow nodes to be ready
-        
-        for source_node in self.cluster_nodes:
-            for target_node in self.cluster_nodes:
-                if source_node['id'] != target_node['id']:
-                    await self._create_subscription(source_node, target_node)
-    
-    async def _create_subscription(self, source_node: Dict, target_node: Dict):
-        """Create subscription from source to target node"""
-        logger.info(f"Creating subscription from {source_node['id']} to {target_node['id']}")
-        
-        # Create connection config for target node
-        target_db_config = {
-            'host': target_node['host'],
-            'port': target_node['port'],
-            'database': self.db_config['database'],
-            'user': self.db_config['user'],
-            'password': self.db_config['password']
-        }
-        target_conn = await asyncpg.connect(**target_db_config)
-        
-        try:
-            source_dsn = f"host={source_node['host']} port={source_node['port']} dbname={self.db_config['database']} user={self.db_config['user']} password={self.db_config['password']}"
-            subscription_name = f"sub_{source_node['id']}_to_{target_node['id']}"
-            
-            await target_conn.execute("""
-                SELECT pglogical.create_subscription(
-                    subscription_name := $1,
-                    provider_dsn := $2,
-                    replication_sets := ARRAY['synapsedb_set'],
-                    synchronize_structure := false,
-                    synchronize_data := false
+            # Create default replication set
+            try:
+                await conn.execute(
+                    "SELECT pglogical.create_replication_set($1, $2, $3, $4, $5)",
+                    f'synapsedb_default_{self.db_config["host"]}', True, True, True, True
                 )
-            """, subscription_name, source_dsn)
-            
-            logger.info(f"Subscription created: {subscription_name}")
-            
+                logger.info(f"Created replication set synapsedb_default_{self.db_config['host']} on local database")
+            except Exception as e:
+                if "already exists" in str(e):
+                    logger.info(f"Replication set synapsedb_default_{self.db_config['host']} already exists on local database")
+                else:
+                    logger.error(f"Failed to create replication set on local database: {e}")
+                    # Don't raise - continue
+
         except Exception as e:
-            if "already exists" in str(e):
-                logger.info(f"Subscription already exists: {source_node['id']} -> {target_node['id']}")
-            else:
-                logger.error(f"Failed to create subscription {source_node['id']} -> {target_node['id']}: {e}")
-                # Don't raise - continue with other subscriptions
+            logger.error(f"Failed to setup pglogical on local database: {e}")
+            raise
         finally:
-            await target_conn.close()
+            await conn.close()
+
+        logger.info("Pglogical nodes setup complete. Subscriptions will be created automatically by replication manager via auto-discovery.")
+    
     
     async def _initialize_metadata(self):
         """Initialize cluster metadata"""
@@ -418,7 +365,7 @@ class ClusterInitializer:
                 try:
                     await conn.execute(
                         "SELECT pglogical.replication_set_add_table($1, $2)",
-                        'synapsedb_set', f'public.{table}'
+                        f'synapsedb_default_{self.db_config[\"host\"]}', f'public.{table}'
                     )
                     logger.info(f"Added {table} to replication set")
                 except Exception as e:

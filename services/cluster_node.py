@@ -132,27 +132,7 @@ class ClusterNode:
                 print(f"DEBUG: Raft init error: {e}")
                 raise
             
-            logger.info("Initializing Replication Manager")
-            repl_manager = ReplicationManager(self.node_id, f"postgres{self.node_id[-1]}", self.db_config, self.cluster_nodes)
-            await repl_manager.initialize()
-            self.services['replication'] = repl_manager
-            
-            logger.info("Initializing Sharding Manager")
-            shard_manager = ShardingManager(self.node_id, self.db_config, self.cluster_nodes)
-            await shard_manager.initialize()
-            self.services['sharding'] = shard_manager
-            
-            logger.info("Initializing Transaction Coordinator")
-            txn_coordinator = TransactionCoordinator(self.node_id, self.db_config, self.cluster_nodes)
-            await txn_coordinator.initialize()
-            self.services['transaction'] = txn_coordinator
-            
-            logger.info("Initializing Schema Manager")
-            schema_manager = SchemaManager(self.node_id, self.db_config, raft_node, self.cluster_nodes)
-            await schema_manager.initialize()
-            self.services['schema'] = schema_manager
-            
-            # Initialize advanced services
+            # Initialize gossip protocol first (needed for auto-discovery)
             logger.info("Initializing Gossip Protocol")
             gossip = GossipProtocol(
                 self.node_id,
@@ -165,6 +145,26 @@ class ClusterNode:
             )
             await gossip.initialize()
             self.services['gossip'] = gossip
+
+            logger.info("Initializing Replication Manager with Auto-Discovery")
+            repl_manager = ReplicationManager(self.node_id, f"postgres{self.node_id[-1]}", self.db_config, self.cluster_nodes, gossip)
+            await repl_manager.initialize()
+            self.services['replication'] = repl_manager
+
+            logger.info("Initializing Sharding Manager")
+            shard_manager = ShardingManager(self.node_id, self.db_config, self.cluster_nodes)
+            await shard_manager.initialize()
+            self.services['sharding'] = shard_manager
+
+            logger.info("Initializing Transaction Coordinator")
+            txn_coordinator = TransactionCoordinator(self.node_id, self.db_config, self.cluster_nodes)
+            await txn_coordinator.initialize()
+            self.services['transaction'] = txn_coordinator
+
+            logger.info("Initializing Schema Manager")
+            schema_manager = SchemaManager(self.node_id, self.db_config, raft_node, self.cluster_nodes)
+            await schema_manager.initialize()
+            self.services['schema'] = schema_manager
             
             logger.info("Initializing Vector Clock System")
             vector_clocks = CausalConsistencyManager(self.node_id, [n['id'] for n in self.cluster_nodes])

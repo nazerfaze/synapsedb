@@ -16,11 +16,12 @@ logger = logging.getLogger(__name__)
 class ReplicationManager:
     """Manages logical replication between PostgreSQL nodes"""
     
-    def __init__(self, node_id: str, node_name: str, db_config: Dict, cluster_nodes: List[Dict]):
+    def __init__(self, node_id: str, node_name: str, db_config: Dict, cluster_nodes: List[Dict], gossip_protocol=None):
         self.node_id = node_id
         self.node_name = node_name
         self.db_config = db_config
         self.cluster_nodes = {n['id']: n for n in cluster_nodes}
+        self.gossip_protocol = gossip_protocol
         
         # Database connections
         self.local_pool: Optional[asyncpg.Pool] = None
@@ -47,9 +48,13 @@ class ReplicationManager:
         
         # Initialize pglogical node
         await self._initialize_pglogical_node()
-        
+
         # Discover existing replicated tables
         await self._discover_replicated_tables()
+
+        # Set up auto-discovery hooks with gossip protocol
+        if self.gossip_protocol:
+            self._setup_auto_discovery_hooks()
         
         logger.info(f"Replication manager initialized for {self.node_name}")
     
@@ -61,7 +66,8 @@ class ReplicationManager:
         tasks = [
             asyncio.create_task(self._replication_setup_loop()),
             asyncio.create_task(self._replication_monitoring_loop()),
-            asyncio.create_task(self._subscription_maintenance_loop())
+            asyncio.create_task(self._subscription_maintenance_loop()),
+            asyncio.create_task(self._auto_discovery_loop())
         ]
         
         try:
@@ -158,19 +164,11 @@ class ReplicationManager:
         """Main loop for setting up replication between nodes"""
         while self.running:
             try:
-                # Get cluster topology from Raft leader
-                cluster_nodes = await self._get_cluster_topology()
-                
-                if cluster_nodes:
-                    for node_info in cluster_nodes:
-                        if node_info['node_id'] != self.node_id and node_info['status'] == 'active':
-                            await self._ensure_replication_to_node(node_info)
-                
                 # Setup publications for tables
                 await self._setup_table_publications()
-                
+
                 await asyncio.sleep(30)  # Check every 30 seconds
-                
+
             except Exception as e:
                 logger.error(f"Error in replication setup loop: {e}")
                 await asyncio.sleep(10)
@@ -202,15 +200,33 @@ class ReplicationManager:
                 await asyncio.sleep(10)
     
     async def _get_cluster_topology(self) -> List[Dict]:
-        """Get cluster topology from database"""
+        """Get cluster topology from gossip protocol or database"""
         try:
+            # Prefer gossip protocol for real-time topology
+            if self.gossip_protocol:
+                members = self.gossip_protocol.get_cluster_members()
+                return [{
+                    'node_id': m['node_id'],
+                    'node_name': m['name'],
+                    'host_address': m['host'],
+                    'port': m['port'],
+                    'status': 'active' if m['state'] == 'alive' else 'inactive'
+                } for m in members if m['state'] == 'alive']
+
+            # Fallback to database
             async with self.local_pool.acquire() as conn:
                 result = await conn.fetch(
-                    "SELECT * FROM synapsedb_replication.get_cluster_topology()"
+                    "SELECT node_id, host, port, status FROM synapsedb_consensus.cluster_nodes WHERE status = 'active'"
                 )
-                
-                return [dict(row) for row in result]
-                
+
+                return [{
+                    'node_id': row['node_id'],
+                    'node_name': row['node_id'],  # Use node_id as name fallback
+                    'host_address': row['host'],
+                    'port': row['port'],
+                    'status': row['status']
+                } for row in result]
+
         except Exception as e:
             logger.error(f"Failed to get cluster topology: {e}")
             return []
@@ -618,3 +634,130 @@ class ReplicationManager:
         except Exception as e:
             logger.error(f"Failed to get replication status: {e}")
             return {'error': str(e)}
+
+    def _setup_auto_discovery_hooks(self):
+        """Setup hooks with gossip protocol for auto-discovery"""
+        if not self.gossip_protocol:
+            return
+
+        # Store original handle methods
+        original_handle_join = self.gossip_protocol._handle_join
+        original_handle_leave = self.gossip_protocol._handle_leave
+        original_mark_dead = self.gossip_protocol._mark_dead
+
+        # Wrap join handler to trigger replication setup
+        async def enhanced_handle_join(message):
+            await original_handle_join(message)
+            # Trigger replication setup for newly joined node
+            if message.payload and 'node_info' in message.payload:
+                node_info = message.payload['node_info']
+                await self._on_node_discovered({
+                    'node_id': node_info['node_id'],
+                    'node_name': node_info['name'],
+                    'host_address': node_info['host'],
+                    'port': node_info['port'],
+                    'status': 'active'
+                })
+
+        # Wrap leave/dead handlers to clean up replication
+        async def enhanced_handle_leave(message):
+            await original_handle_leave(message)
+            await self._on_node_removed(message.target_id)
+
+        async def enhanced_mark_dead(node_id):
+            await original_mark_dead(node_id)
+            await self._on_node_removed(node_id)
+
+        # Replace the handlers
+        self.gossip_protocol._handle_join = enhanced_handle_join
+        self.gossip_protocol._handle_leave = enhanced_handle_leave
+        self.gossip_protocol._mark_dead = enhanced_mark_dead
+
+        logger.info("Auto-discovery hooks set up with gossip protocol")
+
+    async def _auto_discovery_loop(self):
+        """Auto-discovery loop that continuously discovers and sets up replication"""
+        while self.running:
+            try:
+                if self.gossip_protocol:
+                    # Get all alive nodes from gossip protocol
+                    cluster_nodes = await self._get_cluster_topology()
+
+                    for node_info in cluster_nodes:
+                        if node_info['node_id'] != self.node_id and node_info['status'] == 'active':
+                            await self._ensure_replication_to_node(node_info)
+
+                await asyncio.sleep(60)  # Check every minute for auto-discovery
+
+            except Exception as e:
+                logger.error(f"Error in auto-discovery loop: {e}")
+                await asyncio.sleep(30)
+
+    async def _on_node_discovered(self, node_info: Dict):
+        """Called when a new node is discovered via gossip protocol"""
+        try:
+            logger.info(f"Auto-discovery: New node discovered - {node_info['node_name']}")
+
+            # Ensure replication to the new node
+            await self._ensure_replication_to_node(node_info)
+
+            # Add to cluster nodes tracking
+            self.cluster_nodes[node_info['node_id']] = {
+                'id': node_info['node_id'],
+                'host': node_info['host_address'],
+                'port': node_info['port'],
+                'name': node_info['node_name']
+            }
+
+            logger.info(f"Auto-discovery: Set up replication to {node_info['node_name']}")
+
+        except Exception as e:
+            logger.error(f"Failed to handle discovered node {node_info.get('node_name', 'unknown')}: {e}")
+
+    async def _on_node_removed(self, node_id: str):
+        """Called when a node leaves or dies"""
+        try:
+            if node_id in self.cluster_nodes:
+                node_name = self.cluster_nodes[node_id].get('name', node_id)
+                logger.info(f"Auto-discovery: Node removed - {node_name}")
+
+                # Clean up subscriptions to the removed node
+                await self._cleanup_subscriptions_to_node(node_id)
+
+                # Remove from tracking
+                del self.cluster_nodes[node_id]
+
+        except Exception as e:
+            logger.error(f"Failed to handle removed node {node_id}: {e}")
+
+    async def _cleanup_subscriptions_to_node(self, node_id: str):
+        """Clean up subscriptions to a removed node"""
+        try:
+            node_name = self.cluster_nodes.get(node_id, {}).get('name', node_id)
+            subscription_name = f"sub_{self.node_name}_to_{node_name}"
+
+            async with self.local_pool.acquire() as conn:
+                # Check if subscription exists
+                sub_exists = await conn.fetchval(
+                    "SELECT EXISTS(SELECT 1 FROM pglogical.subscription WHERE subscription_name = $1)",
+                    subscription_name
+                )
+
+                if sub_exists:
+                    # Drop the subscription
+                    await conn.execute(
+                        "SELECT pglogical.drop_subscription($1)",
+                        subscription_name
+                    )
+                    logger.info(f"Dropped subscription to removed node: {subscription_name}")
+
+                    # Update tracking table
+                    await conn.execute("""
+                        UPDATE synapsedb_replication.replication_links
+                        SET subscription_status = 'dropped',
+                            updated_at = NOW()
+                        WHERE target_node_id = $1 AND source_node_id = $2
+                    """, self.node_id, node_id)
+
+        except Exception as e:
+            logger.error(f"Failed to cleanup subscriptions to node {node_id}: {e}")
