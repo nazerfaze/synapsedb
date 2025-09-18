@@ -236,18 +236,18 @@ class ClusterInitializer:
             # Create pglogical node
             node_dsn = f"host={self.db_config['host']} port={self.db_config['port']} dbname={self.db_config['database']} user={self.db_config['user']} password={self.db_config['password']}"
 
-                try:
-                    await conn.execute(
-                        "SELECT pglogical.create_node(node_name := $1, dsn := $2)",
-                        f"{self.db_config['host']}", node_dsn
-                    )
-                    logger.info(f"pglogical node created on local database")
-                except Exception as e:
-                    if "already exists" in str(e) or "already configured" in str(e):
-                        logger.info(f"pglogical node already exists on local database")
-                    else:
-                        logger.error(f"Failed to create pglogical node on local database: {e}")
-                        raise
+            try:
+                await conn.execute(
+                    "SELECT pglogical.create_node(node_name := $1, dsn := $2)",
+                    f"{self.db_config['host']}", node_dsn
+                )
+                logger.info(f"pglogical node created on local database")
+            except Exception as e:
+                if "already exists" in str(e) or "already configured" in str(e):
+                    logger.info(f"pglogical node already exists on local database")
+                else:
+                    logger.error(f"Failed to create pglogical node on local database: {e}")
+                    raise
 
             # Create default replication set
             try:
